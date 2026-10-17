@@ -7,4 +7,7 @@ import "context"
 type UserStoreInterface interface {
 	GetByID(ctx context.Context, id int64) (*User, error)
 	List(ctx context.Context, limit, offset int) ([]*User, error)
+	Create(ctx context.Context, u *User) error
+	Update(ctx context.Context, u *User) error
+	Delete(ctx context.Context, id int64) error
 }

@@ -59,9 +59,9 @@ func Load(path string) (*Config, error) {
 			ShutdownTimeout: 10 * time.Second,
 		},
 		Database: DBConfig{
-			Driver:          "postgres",
+			Driver:          "mysql",
 			Host:            "localhost",
-			Port:            5432,
+			Port:            3306,
 			MaxOpenConns:    50,
 			MaxIdleConns:    10,
 			ConnMaxLifetime: 30 * time.Minute,

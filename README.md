@@ -1,6 +1,6 @@
-# Go Microservice Template
+# Go Microservice Server
 
-A production-ready Go microservice template demonstrating context propagation,
+A production-ready Go microservice Server demonstrating context propagation,
 graceful shutdown, structured logging, database connection pooling, and
 clean layered architecture.
 
@@ -19,8 +19,8 @@ internal/server/            ← HTTP layer (chi router, middleware, handlers)
 ## Quick Start
 
 ```bash
-# 1. start postgres
-docker compose up -d postgres
+# 1. start mysql
+docker compose up -d mysql
 
 # 2. build & run
 make build

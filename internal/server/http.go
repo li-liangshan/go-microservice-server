@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"microservice-server/internal/config"
 	"microservice-server/internal/service"
+	"microservice-server/internal/store"
 
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
@@ -39,8 +41,11 @@ func New(cfg config.HTTPConfig, svc *service.UserService, log *slog.Logger) *Ser
 	r.Get("/readyz", healthCheck)
 
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/users/{id}", GetHandler(svc))
 		r.Get("/users", ListHandler(svc))
+		r.Post("/users", CreateHandler(svc))
+		r.Get("/users/{id}", GetHandler(svc))
+		r.Put("/users/{id}", UpdateHandler(svc))
+		r.Delete("/users/{id}", DeleteHandler(svc))
 	})
 
 	srv := &Server{
@@ -116,4 +121,85 @@ func ListHandler(s *service.UserService) http.HandlerFunc {
 
 func healthCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// request DTOs keep store types out of the HTTP wire format.
+type createUserRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+type updateUserRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
+func CreateHandler(s *service.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req createUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		u, err := s.Create(r.Context(), &store.User{Name: req.Name, Email: req.Email})
+		if err != nil {
+			writeUserError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusCreated, u)
+	}
+}
+
+func UpdateHandler(s *service.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseID(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid user id")
+			return
+		}
+		var req updateUserRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid json body")
+			return
+		}
+		u, err := s.Update(r.Context(), id, &store.User{Name: req.Name, Email: req.Email})
+		if err != nil {
+			writeUserError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, u)
+	}
+}
+
+func DeleteHandler(s *service.UserService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := parseID(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid user id")
+			return
+		}
+		if err := s.Delete(r.Context(), id); err != nil {
+			writeUserError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func parseID(r *http.Request) (int64, error) {
+	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+}
+
+// writeUserError centralises the error→status mapping for user handlers.
+func writeUserError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, service.ErrInvalidInput):
+		writeError(w, http.StatusBadRequest, "invalid input: name and a valid email are required")
+	case errors.Is(err, service.ErrUserNotFound):
+		writeError(w, http.StatusNotFound, "user not found")
+	case errors.Is(err, service.ErrEmailExists):
+		writeError(w, http.StatusConflict, "email already exists")
+	default:
+		writeError(w, http.StatusInternalServerError, "internal error")
+	}
 }

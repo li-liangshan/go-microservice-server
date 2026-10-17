@@ -4,11 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"time"
 
 	"microservice-server/internal/config"
 
-	_ "github.com/lib/pq"
+	_ "github.com/go-sql-driver/mysql"
 )
 
 // DB wraps *sql.DB with lifecycle helpers.
@@ -18,12 +19,14 @@ type DB struct {
 
 // New opens a database connection, configures the connection pool and verifies connectivity.
 func New(cfg config.DBConfig) (*DB, error) {
+	// Build a MySQL DSN: user:password@tcp(host:port)/dbname?parseTime=true&loc=Local&charset=utf8mb4
+	// parseTime=true lets the driver scan time.Time directly from DATETIME columns.
 	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		cfg.Host, cfg.Port, cfg.User, cfg.Password, cfg.Name,
+		"%s:%s@tcp(%s:%d)/%s?parseTime=true&loc=Local&charset=utf8mb4",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, url.QueryEscape(cfg.Name),
 	)
 
-	conn, err := sql.Open(cfg.Driver, dsn)
+	conn, err := sql.Open("mysql", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
