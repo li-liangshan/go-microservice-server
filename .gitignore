@@ -1,0 +1,136 @@
+# ============================================================
+# Go specific ignores
+# ============================================================
+# Compiled binaries
+*.exe
+*.exe~
+*.dll
+*.dylib
+*.so
+*.dll
+*.test
+*.out
+
+# Build output
+/bin/
+/build/
+/dist/
+/tmp/
+
+# Go workspace
+go.work
+go.work.sum
+
+# Dependency directories
+/vendor/
+
+# Coverage profile
+coverage.txt
+coverage.html
+coverage.out
+
+# Test binaries / cache
+*.test
+.cache/
+
+# Profiling output
+*.prof
+*.pprof
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+
+# Local config overrides
+configs/config.local.yaml
+configs/config.local.yml
+configs/*.local.yaml
+configs/*.local.yml
+
+# ============================================================
+# Logs
+# ============================================================
+logs/
+*.log
+*.log.*
+!.gitkeep
+
+# ============================================================
+# Runtime / temp data
+# ============================================================
+tmp/
+temp/
+*.tmp
+*.pid
+*.seed
+*.pid.lock
+
+# Persisted data (DB dumps, etc.)
+*.db
+*.sqlite
+*.sqlite3
+/data/
+
+# ============================================================
+# IDE / Editor
+# ============================================================
+# GoLand / IntelliJ
+.idea/
+*.iml
+*.iws
+
+# VS Code
+.vscode/
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+
+# Vim / Emacs
+*.swp
+*.swo
+*~
+.\#*
+
+# ============================================================
+# OS files
+# ============================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ============================================================
+# Docker / k8s
+# ============================================================
+docker-compose.override.yml
+docker-compose.*.yml
+!docker-compose.yml
+*.kubeconfig
+.kube/
+
+# ============================================================
+# Generated / Swagger
+# ============================================================
+docs/swagger/
+swagger.json
+swagger.yaml
+api/openapi.yaml
+
+# Protocol buffers generated
+*.pb.go
+*.pb.gw.go
+
+# ============================================================
+# Misc
+# ============================================================
+.history/
+.local/
