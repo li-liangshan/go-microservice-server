@@ -16,6 +16,7 @@ import (
 	"microservice-server/internal/server"
 	"microservice-server/internal/service"
 	"microservice-server/internal/store"
+	"microservice-server/internal/telemetry"
 )
 
 // @title Go Microservice Template
@@ -40,7 +41,26 @@ func main() {
 	slog.SetDefault(log)
 	log.Info("service starting", "name", cfg.ServiceName, "version", cfg.Version)
 
-	// ── 3. Connect to database ─────────────────────────────────────────────
+	// ── 3. Initialize OpenTelemetry ────────────────────────────────────────
+	telemetryProvider, err := telemetry.New(context.Background(), cfg, log)
+	if err != nil {
+		log.Error("failed to initialize telemetry", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Telemetry.ShutdownTimeout)
+		defer cancel()
+		if err := telemetryProvider.Shutdown(shutdownCtx); err != nil {
+			log.Error("failed to shutdown telemetry", "err", err)
+		}
+	}()
+	if cfg.Telemetry.Enabled {
+		log.Info("telemetry enabled", "endpoint", cfg.Telemetry.Endpoint)
+	} else {
+		log.Info("telemetry disabled")
+	}
+
+	// ── 4. Connect to database ─────────────────────────────────────────────
 	db, err := database.New(cfg.Database)
 	if err != nil {
 		log.Error("failed to connect database", "err", err)
@@ -49,12 +69,12 @@ func main() {
 	defer db.Close()
 	log.Info("database connected", "host", cfg.Database.Host, "port", cfg.Database.Port)
 
-	// ── 4. Build dependency graph ─────────────────────────────────────────
+	// ── 5. Build dependency graph ─────────────────────────────────────────
 	userStore := store.NewUserStore(db)
 	userService := service.NewUserService(userStore, log)
 	httpServer := server.New(cfg.HTTP, userService, log)
 
-	// ── 5. Graceful startup & shutdown ────────────────────────────────────
+	// ── 6. Graceful startup & shutdown ────────────────────────────────────
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 

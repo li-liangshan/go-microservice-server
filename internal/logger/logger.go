@@ -1,8 +1,11 @@
 package logger
 
 import (
+	"context"
 	"log/slog"
 	"os"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // New creates a structured slog.Logger with the given level and format.
@@ -29,5 +32,30 @@ func New(level, format string) *slog.Logger {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
 
-	return slog.New(handler)
+	return slog.New(traceContextHandler{Handler: handler})
+}
+
+// traceContextHandler adds trace_id and span_id to records emitted with a
+// context that carries an active OpenTelemetry span.
+type traceContextHandler struct {
+	slog.Handler
+}
+
+func (h traceContextHandler) Handle(ctx context.Context, record slog.Record) error {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if spanContext.IsValid() {
+		record.AddAttrs(
+			slog.String("trace_id", spanContext.TraceID().String()),
+			slog.String("span_id", spanContext.SpanID().String()),
+		)
+	}
+	return h.Handler.Handle(ctx, record)
+}
+
+func (h traceContextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return traceContextHandler{Handler: h.Handler.WithAttrs(attrs)}
+}
+
+func (h traceContextHandler) WithGroup(name string) slog.Handler {
+	return traceContextHandler{Handler: h.Handler.WithGroup(name)}
 }

@@ -2,12 +2,16 @@ package logger
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"testing"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // captureStdout replaces os.Stdout with a pipe for the duration of fn and
@@ -135,5 +139,30 @@ func TestNew_TextFormat(t *testing.T) {
 	}
 	if !strings.Contains(out, "user=alice") {
 		t.Errorf("missing user=alice in: %q", out)
+	}
+}
+
+func TestNew_AddsTraceContext(t *testing.T) {
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	defer func() { _ = tracerProvider.Shutdown(context.Background()) }()
+
+	ctx, span := tracerProvider.Tracer("test").Start(context.Background(), "test")
+	defer span.End()
+	spanContext := trace.SpanContextFromContext(ctx)
+
+	out := captureStdout(t, func() {
+		l := New("info", "json")
+		l.InfoContext(ctx, "hello")
+	})
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("output not valid JSON: %v\nraw: %q", err, out)
+	}
+	if parsed["trace_id"] != spanContext.TraceID().String() {
+		t.Errorf("trace_id: got %v, want %s", parsed["trace_id"], spanContext.TraceID())
+	}
+	if parsed["span_id"] != spanContext.SpanID().String() {
+		t.Errorf("span_id: got %v, want %s", parsed["span_id"], spanContext.SpanID())
 	}
 }

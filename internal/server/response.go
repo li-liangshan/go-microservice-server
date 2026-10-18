@@ -28,7 +28,7 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 			ww := &statusRecorder{ResponseWriter: w, status: 200}
 			next.ServeHTTP(ww, r)
 
-			log.Info("http request",
+			log.InfoContext(r.Context(), "http request",
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", ww.status,
@@ -57,5 +57,3 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	r.bytes += n
 	return n, err
 }
-
-var _ = slog.Info // keep import guard

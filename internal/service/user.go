@@ -38,7 +38,7 @@ func (s *UserService) Get(ctx context.Context, id int64) (*store.User, error) {
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrUserNotFound
 		}
-		s.log.Error("user store get failed", "id", id, "err", err)
+		s.log.ErrorContext(ctx, "user store get failed", "id", id, "err", err)
 		return nil, err
 	}
 	return user, nil
@@ -48,7 +48,7 @@ func (s *UserService) Get(ctx context.Context, id int64) (*store.User, error) {
 func (s *UserService) List(ctx context.Context, limit, offset int) ([]*store.User, error) {
 	users, err := s.store.List(ctx, limit, offset)
 	if err != nil {
-		s.log.Error("user store list failed", "err", err)
+		s.log.ErrorContext(ctx, "user store list failed", "err", err)
 		return nil, err
 	}
 	return users, nil
@@ -64,7 +64,7 @@ func (s *UserService) Create(ctx context.Context, u *store.User) (*store.User, e
 		if errors.Is(err, store.ErrDuplicate) {
 			return nil, ErrEmailExists
 		}
-		s.log.Error("user store create failed", "err", err)
+		s.log.ErrorContext(ctx, "user store create failed", "err", err)
 		return nil, err
 	}
 	return u, nil
@@ -84,7 +84,7 @@ func (s *UserService) Update(ctx context.Context, id int64, u *store.User) (*sto
 		if errors.Is(err, store.ErrNotFound) {
 			return nil, ErrUserNotFound
 		}
-		s.log.Error("user store update failed", "id", id, "err", err)
+		s.log.ErrorContext(ctx, "user store update failed", "id", id, "err", err)
 		return nil, err
 	}
 	return s.store.GetByID(ctx, id)
@@ -96,7 +96,7 @@ func (s *UserService) Delete(ctx context.Context, id int64) error {
 		if errors.Is(err, store.ErrNotFound) {
 			return ErrUserNotFound
 		}
-		s.log.Error("user store delete failed", "id", id, "err", err)
+		s.log.ErrorContext(ctx, "user store delete failed", "id", id, "err", err)
 		return err
 	}
 	return nil

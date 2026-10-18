@@ -38,6 +38,14 @@ func TestLoad_AppliesAllDefaults(t *testing.T) {
 		{"DB.MaxOpenConns", cfg.Database.MaxOpenConns, 50},
 		{"DB.MaxIdleConns", cfg.Database.MaxIdleConns, 10},
 		{"DB.ConnMaxLifetime", cfg.Database.ConnMaxLifetime, 30 * time.Minute},
+		{"Telemetry.Enabled", cfg.Telemetry.Enabled, true},
+		{"Telemetry.Endpoint", cfg.Telemetry.Endpoint, "localhost:4317"},
+		{"Telemetry.Insecure", cfg.Telemetry.Insecure, true},
+		{"Telemetry.Environment", cfg.Telemetry.Environment, "development"},
+		{"Telemetry.SampleRatio", cfg.Telemetry.SampleRatio, 1.0},
+		{"Telemetry.ExportInterval", cfg.Telemetry.ExportInterval, 10 * time.Second},
+		{"Telemetry.ExportTimeout", cfg.Telemetry.ExportTimeout, 5 * time.Second},
+		{"Telemetry.ShutdownTimeout", cfg.Telemetry.ShutdownTimeout, 10 * time.Second},
 	}
 	for _, c := range cases {
 		if c.got != c.want {
@@ -67,6 +75,17 @@ database:
   max_open_conns: 100
   max_idle_conns: 20
   conn_max_lifetime: 2h
+telemetry:
+  enabled: true
+  endpoint: otel-collector:4317
+  insecure: false
+  environment: production
+  sample_ratio: 0.25
+  export_interval: 30s
+  export_timeout: 8s
+  shutdown_timeout: 12s
+  headers:
+    x-api-key: secret
 `
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.yaml")
@@ -92,6 +111,15 @@ database:
 	}
 	if cfg.Database.ConnMaxLifetime != 2*time.Hour {
 		t.Errorf("ConnMaxLifetime: %v", cfg.Database.ConnMaxLifetime)
+	}
+	if cfg.Telemetry.Endpoint != "otel-collector:4317" || cfg.Telemetry.Insecure {
+		t.Errorf("Telemetry overrides lost: %+v", cfg.Telemetry)
+	}
+	if cfg.Telemetry.SampleRatio != 0.25 || cfg.Telemetry.ExportInterval != 30*time.Second {
+		t.Errorf("Telemetry sampling/export lost: %+v", cfg.Telemetry)
+	}
+	if cfg.Telemetry.Headers["x-api-key"] != "secret" {
+		t.Errorf("Telemetry headers: %+v", cfg.Telemetry.Headers)
 	}
 }
 
@@ -134,5 +162,27 @@ func TestLoad_InvalidYAML(t *testing.T) {
 	}
 	if _, err := Load(path); err == nil {
 		t.Fatal("expected yaml parse error")
+	}
+}
+
+func TestLoad_InvalidTelemetrySampleRatio(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte("telemetry:\n  sample_ratio: 1.5\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected sample ratio validation error")
+	}
+}
+
+func TestLoad_RejectsEmptyTelemetryEndpointWhenEnabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(path, []byte("telemetry:\n  enabled: true\n  endpoint: \"\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatal("expected endpoint validation error")
 	}
 }

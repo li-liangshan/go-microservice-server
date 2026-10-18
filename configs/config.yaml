@@ -20,3 +20,14 @@ database:
   max_open_conns: 50
   max_idle_conns: 10
   conn_max_lifetime: 30m
+
+telemetry:
+  enabled: true
+  endpoint: localhost:4317
+  insecure: true
+  environment: development
+  sample_ratio: 1.0
+  export_interval: 10s
+  export_timeout: 5s
+  shutdown_timeout: 10s
+  headers: {}

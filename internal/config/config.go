@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
@@ -9,12 +10,13 @@ import (
 
 // Config is the top-level service configuration.
 type Config struct {
-	ServiceName string     `yaml:"service_name"`
-	Version     string     `yaml:"version"`
-	LogLevel    string     `yaml:"log_level"`
-	LogFormat   string     `yaml:"log_format"`
-	HTTP        HTTPConfig `yaml:"http"`
-	Database    DBConfig   `yaml:"database"`
+	ServiceName string          `yaml:"service_name"`
+	Version     string          `yaml:"version"`
+	LogLevel    string          `yaml:"log_level"`
+	LogFormat   string          `yaml:"log_format"`
+	HTTP        HTTPConfig      `yaml:"http"`
+	Database    DBConfig        `yaml:"database"`
+	Telemetry   TelemetryConfig `yaml:"telemetry"`
 }
 
 // HTTPConfig holds all HTTP server tunables.
@@ -37,6 +39,19 @@ type DBConfig struct {
 	MaxOpenConns    int           `yaml:"max_open_conns"`
 	MaxIdleConns    int           `yaml:"max_idle_conns"`
 	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+}
+
+// TelemetryConfig controls OpenTelemetry trace and metric export.
+type TelemetryConfig struct {
+	Enabled         bool              `yaml:"enabled"`
+	Endpoint        string            `yaml:"endpoint"`
+	Insecure        bool              `yaml:"insecure"`
+	Environment     string            `yaml:"environment"`
+	SampleRatio     float64           `yaml:"sample_ratio"`
+	ExportInterval  time.Duration     `yaml:"export_interval"`
+	ExportTimeout   time.Duration     `yaml:"export_timeout"`
+	ShutdownTimeout time.Duration     `yaml:"shutdown_timeout"`
+	Headers         map[string]string `yaml:"headers"`
 }
 
 // Load reads YAML configuration from disk and applies sensible defaults.
@@ -66,10 +81,26 @@ func Load(path string) (*Config, error) {
 			MaxIdleConns:    10,
 			ConnMaxLifetime: 30 * time.Minute,
 		},
+		Telemetry: TelemetryConfig{
+			Enabled:         true,
+			Endpoint:        "localhost:4317",
+			Insecure:        true,
+			Environment:     "development",
+			SampleRatio:     1.0,
+			ExportInterval:  10 * time.Second,
+			ExportTimeout:   5 * time.Second,
+			ShutdownTimeout: 10 * time.Second,
+		},
 	}
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	if cfg.Telemetry.Enabled && cfg.Telemetry.Endpoint == "" {
+		return nil, fmt.Errorf("telemetry.endpoint is required when telemetry is enabled")
+	}
+	if cfg.Telemetry.SampleRatio < 0 || cfg.Telemetry.SampleRatio > 1 {
+		return nil, fmt.Errorf("telemetry.sample_ratio must be between 0 and 1")
 	}
 	return cfg, nil
 }

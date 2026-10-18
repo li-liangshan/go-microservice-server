@@ -9,7 +9,9 @@ import (
 
 	"microservice-server/internal/config"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/go-sql-driver/mysql"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 // DB wraps *sql.DB with lifecycle helpers.
@@ -26,9 +28,14 @@ func New(cfg config.DBConfig) (*DB, error) {
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, url.QueryEscape(cfg.Name),
 	)
 
-	conn, err := sql.Open("mysql", dsn)
+	conn, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(semconv.DBSystemMySQL))
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
+	}
+
+	if err := otelsql.RegisterDBStatsMetrics(conn, otelsql.WithAttributes(semconv.DBSystemMySQL)); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("register db metrics: %w", err)
 	}
 
 	conn.SetMaxOpenConns(cfg.MaxOpenConns)
@@ -39,6 +46,7 @@ func New(cfg config.DBConfig) (*DB, error) {
 	defer cancel()
 
 	if err := conn.PingContext(ctx); err != nil {
+		_ = conn.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
