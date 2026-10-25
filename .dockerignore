@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+!.env.example
+bin
+coverage.*
+*.log
+*.out
+.idea
+.vscode
+.DS_Store

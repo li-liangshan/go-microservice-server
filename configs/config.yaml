@@ -5,10 +5,16 @@ log_format: json
 
 http:
   addr: ":8080"
+  read_header_timeout: 5s
   read_timeout: 15s
   write_timeout: 15s
   idle_timeout: 60s
+  request_timeout: 10s
   shutdown_timeout: 10s
+  readiness_timeout: 2s
+  max_header_bytes: 1048576
+  max_body_bytes: 1048576
+  auth_token: ""
 
 database:
   driver: mysql
@@ -20,6 +26,8 @@ database:
   max_open_conns: 50
   max_idle_conns: 10
   conn_max_lifetime: 30m
+  connect_timeout: 5s
+  tls_mode: "false"
 
 telemetry:
   enabled: true

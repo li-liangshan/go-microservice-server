@@ -2,13 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"microservice-server/internal/config"
 	"microservice-server/internal/database"
@@ -26,14 +27,20 @@ import (
 // @BasePath /api/v1
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("service failed", "err", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	cfgPath := flag.String("config", "configs/config.yaml", "path to config file")
 	flag.Parse()
 
 	// ── 1. Load configuration ──────────────────────────────────────────────
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		slog.Error("failed to load config", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("load config: %w", err)
 	}
 
 	// ── 2. Initialize structured logger ───────────────────────────────────
@@ -44,8 +51,7 @@ func main() {
 	// ── 3. Initialize OpenTelemetry ────────────────────────────────────────
 	telemetryProvider, err := telemetry.New(context.Background(), cfg, log)
 	if err != nil {
-		log.Error("failed to initialize telemetry", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("initialize telemetry: %w", err)
 	}
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Telemetry.ShutdownTimeout)
@@ -61,38 +67,47 @@ func main() {
 	}
 
 	// ── 4. Connect to database ─────────────────────────────────────────────
-	db, err := database.New(cfg.Database)
+	db, err := database.New(context.Background(), cfg.Database)
 	if err != nil {
-		log.Error("failed to connect database", "err", err)
-		os.Exit(1)
+		return fmt.Errorf("connect database: %w", err)
 	}
-	defer db.Close()
+	defer func() {
+		if err := db.Close(); err != nil {
+			log.Error("failed to close database", "err", err)
+		}
+	}()
 	log.Info("database connected", "host", cfg.Database.Host, "port", cfg.Database.Port)
 
 	// ── 5. Build dependency graph ─────────────────────────────────────────
 	userStore := store.NewUserStore(db)
 	userService := service.NewUserService(userStore, log)
-	httpServer := server.New(cfg.HTTP, userService, log)
+	httpServer := server.New(cfg.HTTP, userService, db, log)
 
 	// ── 6. Graceful startup & shutdown ────────────────────────────────────
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	serverErr := make(chan error, 1)
 	go func() {
 		log.Info("http server listening", "addr", cfg.HTTP.Addr)
-		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Error("http server error", "err", err)
-			stop()
-		}
+		serverErr <- httpServer.ListenAndServe()
 	}()
 
-	<-ctx.Done()
-	log.Info("shutdown signal received, draining...")
+	select {
+	case <-ctx.Done():
+		log.Info("shutdown signal received, draining...")
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("http server: %w", err)
+		}
+	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.HTTP.ShutdownTimeout)
 	defer cancel()
 	if err := httpServer.Shutdown(shutdownCtx); err != nil {
-		log.Error("forced shutdown", "err", err)
+		_ = httpServer.Close()
+		return fmt.Errorf("shutdown http server: %w", err)
 	}
 	log.Info("service stopped")
+	return nil
 }

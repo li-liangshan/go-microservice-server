@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
-	"time"
 
 	"microservice-server/internal/config"
 
@@ -20,13 +19,8 @@ type DB struct {
 }
 
 // New opens a database connection, configures the connection pool and verifies connectivity.
-func New(cfg config.DBConfig) (*DB, error) {
-	// Build a MySQL DSN: user:password@tcp(host:port)/dbname?parseTime=true&loc=Local&charset=utf8mb4
-	// parseTime=true lets the driver scan time.Time directly from DATETIME columns.
-	dsn := fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?parseTime=true&loc=Local&charset=utf8mb4",
-		cfg.User, cfg.Password, cfg.Host, cfg.Port, url.QueryEscape(cfg.Name),
-	)
+func New(ctx context.Context, cfg config.DBConfig) (*DB, error) {
+	dsn := buildDSN(cfg)
 
 	conn, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(semconv.DBSystemMySQL))
 	if err != nil {
@@ -42,13 +36,21 @@ func New(cfg config.DBConfig) (*DB, error) {
 	conn.SetMaxIdleConns(cfg.MaxIdleConns)
 	conn.SetConnMaxLifetime(cfg.ConnMaxLifetime)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pingCtx, cancel := context.WithTimeout(ctx, cfg.ConnectTimeout)
 	defer cancel()
 
-	if err := conn.PingContext(ctx); err != nil {
+	if err := conn.PingContext(pingCtx); err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
 	return &DB{conn}, nil
+}
+
+func buildDSN(cfg config.DBConfig) string {
+	// parseTime=true lets the driver scan time.Time directly from DATETIME columns.
+	return fmt.Sprintf(
+		"%s:%s@tcp(%s:%d)/%s?parseTime=true&loc=UTC&charset=utf8mb4&tls=%s",
+		cfg.User, cfg.Password, cfg.Host, cfg.Port, url.QueryEscape(cfg.Name), url.QueryEscape(cfg.TLSMode),
+	)
 }

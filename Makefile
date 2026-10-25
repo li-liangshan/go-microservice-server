@@ -1,7 +1,7 @@
 BINARY=bin/server
 PKG=./...
 
-.PHONY: build run test fmt vet tidy clean
+.PHONY: build run test fmt vet tidy migrate clean
 
 build:
 	go build -o $(BINARY) ./cmd/server
@@ -20,6 +20,9 @@ vet:
 
 tidy:
 	go mod tidy
+
+migrate:
+	./scripts/migrate.sh
 
 clean:
 	rm -rf bin

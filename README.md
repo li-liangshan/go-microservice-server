@@ -20,19 +20,24 @@ internal/server/            ← HTTP layer (chi router, middleware, handlers)
 ## Quick Start
 
 ```bash
-# 1. start mysql, OpenTelemetry Collector and Jaeger
-docker compose up -d
+# 1. start the full stack: app, MySQL, OpenTelemetry Collector and Jaeger
+cp .env.example .env
+docker compose up -d --build
 
-# 2. build & run
-make build
-make run
-
-# 3. test
+# 2. verify the service
 curl http://localhost:8080/healthz
-curl http://localhost:8080/api/v1/users/1
+curl http://localhost:8080/readyz
+curl http://localhost:8080/api/v1/users
 
-# 4. inspect traces
+# 3. inspect traces
 open http://localhost:16686
+```
+
+To run against a local MySQL instance instead:
+
+```bash
+export DATABASE_PASSWORD=admin
+make run
 ```
 
 ## Features
@@ -41,11 +46,16 @@ open http://localhost:16686
 - **Graceful shutdown** — `SIGINT`/`SIGTERM` triggers draining; HTTP server shuts down within timeout.
 - **Structured logging** — JSON logs via `slog` with request-level middleware (method, path, status, latency).
 - **OpenTelemetry** — OTLP traces and metrics for HTTP, MySQL, and connection pool statistics.
+- **Production health checks** — `/healthz` is liveness, `/readyz` verifies MySQL and drains on shutdown.
+- **HTTP hardening** — header/body limits, request timeouts, security headers, structured panic recovery, and optional Bearer token auth.
+- **Environment-aware configuration** — secrets and deployment values can be injected without rebuilding the image.
+- **Database migrations** — Compose initializes a fresh MySQL volume; `make migrate` applies migrations to existing databases.
 - **Database pool tuning** — `SetMaxOpenConns`, `SetMaxIdleConns`, `SetConnMaxLifetime` all configurable.
 - **Error wrapping** — store → service → handler with `errors.Is` sentinel checks.
 - **Chi middleware** — RequestID, RealIP, Recoverer (no crashes), timeout.
-- **Multi-stage Dockerfile** — minimal Alpine runtime, non-root user, stripped binary.
-- **Makefile** — `build`, `run`, `test`, `fmt`, `vet`, `tidy`, `clean`.
+- **Multi-stage Dockerfile** — minimal Alpine runtime, non-root user, stripped binary, container health check.
+- **Makefile** — `build`, `run`, `test`, `fmt`, `vet`, `tidy`, `migrate`, `clean`.
+- **CI workflow** — race tests, vet, binary build, Compose validation, and Docker build on every push/PR.
 
 ## Testing
 
@@ -55,7 +65,48 @@ make test   # runs go test -v -race -cover
 
 ## Configuration
 
-All settings live in `configs/config.yaml`. Override with the `--config` flag.
+All settings live in `configs/config.yaml`. Override the file with `--config`,
+then use environment variables for deployment-specific or secret values.
+Configuration is validated at startup and the service fails fast on unsafe
+values.
+
+Common production variables:
+
+| Variable | Purpose |
+|---|---|
+| `SERVICE_NAME`, `SERVICE_VERSION` | OpenTelemetry resource identity |
+| `LOG_LEVEL`, `LOG_FORMAT` | `debug`/`info`/`warn`/`error`, `json`/`text` |
+| `HTTP_ADDR`, `HTTP_AUTH_TOKEN` | Listen address and optional Bearer token |
+| `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`, `DATABASE_TLS_MODE` | MySQL connection and TLS mode (`false`/`true`/`skip-verify`) |
+| `TELEMETRY_ENABLED`, `TELEMETRY_ENDPOINT`, `TELEMETRY_INSECURE`, `TELEMETRY_ENVIRONMENT`, `TELEMETRY_SAMPLE_RATIO` | OTLP export |
+
+When `HTTP_AUTH_TOKEN` is set, all `/api/v1` routes require
+`Authorization: Bearer <token>`. Health endpoints remain unauthenticated.
+
+## Migrations
+
+`docker compose up -d --build` mounts `migrations/` into MySQL's
+`docker-entrypoint-initdb.d`, so a fresh volume is initialized automatically.
+For an existing database, use the configured connection:
+
+```bash
+DATABASE_HOST=127.0.0.1 \
+DATABASE_USER=root \
+DATABASE_PASSWORD=admin \
+make migrate
+```
+
+For production, create a dedicated least-privilege database user and run
+migrations as a separate deployment step instead of using the MySQL root
+account.
+
+## Production Notes
+
+- Terminate TLS at an ingress or load balancer; the application serves HTTP internally.
+- Set a strong `HTTP_AUTH_TOKEN` and `MYSQL_ROOT_PASSWORD` through your secret manager, never commit `.env`.
+- Use `/healthz` for liveness probes and `/readyz` for readiness probes.
+- Set `TELEMETRY_ENVIRONMENT=production` and point `TELEMETRY_ENDPOINT` at your OTLP Collector.
+- The Compose file is a local integration stack; production should manage MySQL, secrets, replicas, and migrations separately.
 
 ## OpenTelemetry
 

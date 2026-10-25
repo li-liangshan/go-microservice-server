@@ -6,7 +6,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /out/server ./cmd/server
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -trimpath \
+    -buildvcs=false \
+    -ldflags="-s -w" \
+    -o /out/server ./cmd/server
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
 FROM alpine:3.20
@@ -20,5 +24,9 @@ COPY --from=builder /src/configs /app/configs
 
 USER app
 EXPOSE 8080
+STOPSIGNAL SIGTERM
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:8080/healthz >/dev/null || exit 1
 
 ENTRYPOINT ["/app/server", "--config", "/app/configs/config.yaml"]

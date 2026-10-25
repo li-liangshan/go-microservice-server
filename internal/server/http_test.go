@@ -146,7 +146,7 @@ func TestListHandler_Success(t *testing.T) {
 		t.Fatalf("status %d", w.Code)
 	}
 	var resp struct {
-		Count int          `json:"count"`
+		Count int           `json:"count"`
 		Users []*store.User `json:"users"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
