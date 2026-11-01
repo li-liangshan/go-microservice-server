@@ -5,10 +5,13 @@ services:
     environment:
       DATABASE_HOST: mysql
       DATABASE_PORT: "3306"
-      DATABASE_USER: root
-      DATABASE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+      # Least-privilege account created by the MySQL image, not root.
+      DATABASE_USER: microservice
+      DATABASE_PASSWORD: ${MYSQL_PASSWORD:-microservice-dev-password}
       DATABASE_NAME: microservice
-      HTTP_AUTH_TOKEN: ${HTTP_AUTH_TOKEN:-}
+      DATABASE_TLS_MODE: "false"
+      # Required: the API refuses to start unauthenticated in production.
+      HTTP_AUTH_TOKEN: ${HTTP_AUTH_TOKEN:?set HTTP_AUTH_TOKEN in .env before starting}
       TELEMETRY_ENDPOINT: otel-collector:4317
       TELEMETRY_ENVIRONMENT: ${TELEMETRY_ENVIRONMENT:-development}
     ports:
@@ -23,9 +26,10 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-admin}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root-dev-password}
       MYSQL_DATABASE: microservice
-      MYSQL_ROOT_HOST: "%"
+      MYSQL_USER: microservice
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-microservice-dev-password}
       TZ: Asia/Shanghai
     command:
       - --character-set-server=utf8mb4
@@ -51,8 +55,20 @@ services:
     ports:
       - "4317:4317" # OTLP gRPC
       - "4318:4318" # OTLP HTTP
+      - "8889:8889" # Prometheus metrics
     depends_on:
       - jaeger
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes:
+      - ./configs/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - otel-collector
     restart: unless-stopped
 
   jaeger:

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -11,10 +12,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Deployment environments recognised by the service.
+const (
+	EnvDevelopment = "development"
+	EnvStaging     = "staging"
+	EnvProduction  = "production"
+)
+
 // Config is the top-level service configuration.
 type Config struct {
 	ServiceName string          `yaml:"service_name"`
 	Version     string          `yaml:"version"`
+	Environment string          `yaml:"environment"`
 	LogLevel    string          `yaml:"log_level"`
 	LogFormat   string          `yaml:"log_format"`
 	HTTP        HTTPConfig      `yaml:"http"`
@@ -24,32 +33,45 @@ type Config struct {
 
 // HTTPConfig holds all HTTP server tunables.
 type HTTPConfig struct {
-	Addr              string        `yaml:"addr"`
-	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"`
-	ReadTimeout       time.Duration `yaml:"read_timeout"`
-	WriteTimeout      time.Duration `yaml:"write_timeout"`
-	IdleTimeout       time.Duration `yaml:"idle_timeout"`
-	RequestTimeout    time.Duration `yaml:"request_timeout"`
-	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"`
-	ReadinessTimeout  time.Duration `yaml:"readiness_timeout"`
-	MaxHeaderBytes    int           `yaml:"max_header_bytes"`
-	MaxBodyBytes      int64         `yaml:"max_body_bytes"`
-	AuthToken         string        `yaml:"auth_token"`
+	Addr              string          `yaml:"addr"`
+	ReadHeaderTimeout time.Duration   `yaml:"read_header_timeout"`
+	ReadTimeout       time.Duration   `yaml:"read_timeout"`
+	WriteTimeout      time.Duration   `yaml:"write_timeout"`
+	IdleTimeout       time.Duration   `yaml:"idle_timeout"`
+	RequestTimeout    time.Duration   `yaml:"request_timeout"`
+	ShutdownTimeout   time.Duration   `yaml:"shutdown_timeout"`
+	ReadinessTimeout  time.Duration   `yaml:"readiness_timeout"`
+	MaxHeaderBytes    int             `yaml:"max_header_bytes"`
+	MaxBodyBytes      int64           `yaml:"max_body_bytes"`
+	AuthToken         string          `yaml:"auth_token"`
+	TrustedProxies    []string        `yaml:"trusted_proxies"`
+	RateLimit         RateLimitConfig `yaml:"rate_limit"`
+}
+
+// RateLimitConfig configures the per-client token bucket applied to the
+// API routes. A client is identified by its resolved IP address.
+type RateLimitConfig struct {
+	Enabled           bool    `yaml:"enabled"`
+	RequestsPerSecond float64 `yaml:"requests_per_second"`
+	Burst             int     `yaml:"burst"`
+	MaxTrackedClients int     `yaml:"max_tracked_clients"`
 }
 
 // DBConfig holds database connection parameters.
 type DBConfig struct {
-	Driver          string        `yaml:"driver"`
-	Host            string        `yaml:"host"`
-	Port            int           `yaml:"port"`
-	User            string        `yaml:"user"`
-	Password        string        `yaml:"password"`
-	Name            string        `yaml:"name"`
-	MaxOpenConns    int           `yaml:"max_open_conns"`
-	MaxIdleConns    int           `yaml:"max_idle_conns"`
-	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
-	ConnectTimeout  time.Duration `yaml:"connect_timeout"`
-	TLSMode         string        `yaml:"tls_mode"`
+	Driver               string        `yaml:"driver"`
+	Host                 string        `yaml:"host"`
+	Port                 int           `yaml:"port"`
+	User                 string        `yaml:"user"`
+	Password             string        `yaml:"password"`
+	Name                 string        `yaml:"name"`
+	MaxOpenConns         int           `yaml:"max_open_conns"`
+	MaxIdleConns         int           `yaml:"max_idle_conns"`
+	ConnMaxLifetime      time.Duration `yaml:"conn_max_lifetime"`
+	ConnectTimeout       time.Duration `yaml:"connect_timeout"`
+	ConnectRetries       int           `yaml:"connect_retries"`
+	ConnectRetryInterval time.Duration `yaml:"connect_retry_interval"`
+	TLSMode              string        `yaml:"tls_mode"`
 }
 
 // TelemetryConfig controls OpenTelemetry trace and metric export.
@@ -75,6 +97,7 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{
 		ServiceName: "go-microservice",
 		Version:     "1.0.0",
+		Environment: EnvDevelopment,
 		LogLevel:    "info",
 		LogFormat:   "json",
 		HTTP: HTTPConfig{
@@ -88,24 +111,31 @@ func Load(path string) (*Config, error) {
 			ReadinessTimeout:  2 * time.Second,
 			MaxHeaderBytes:    1 << 20,
 			MaxBodyBytes:      1 << 20,
+			RateLimit: RateLimitConfig{
+				Enabled:           true,
+				RequestsPerSecond: 50,
+				Burst:             100,
+				MaxTrackedClients: 10000,
+			},
 		},
 		Database: DBConfig{
-			Driver:          "mysql",
-			Host:            "localhost",
-			Port:            3306,
-			User:            "root",
-			Name:            "microservice",
-			MaxOpenConns:    50,
-			MaxIdleConns:    10,
-			ConnMaxLifetime: 30 * time.Minute,
-			ConnectTimeout:  5 * time.Second,
-			TLSMode:         "false",
+			Driver:               "mysql",
+			Host:                 "localhost",
+			Port:                 3306,
+			User:                 "root",
+			Name:                 "microservice",
+			MaxOpenConns:         50,
+			MaxIdleConns:         10,
+			ConnMaxLifetime:      30 * time.Minute,
+			ConnectTimeout:       5 * time.Second,
+			ConnectRetries:       5,
+			ConnectRetryInterval: 2 * time.Second,
+			TLSMode:              "false",
 		},
 		Telemetry: TelemetryConfig{
 			Enabled:         true,
 			Endpoint:        "localhost:4317",
 			Insecure:        true,
-			Environment:     "development",
 			SampleRatio:     1.0,
 			ExportInterval:  10 * time.Second,
 			ExportTimeout:   5 * time.Second,
@@ -115,6 +145,11 @@ func Load(path string) (*Config, error) {
 
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, err
+	}
+	// The telemetry deployment environment defaults to the service environment
+	// so both always agree unless explicitly overridden.
+	if strings.TrimSpace(cfg.Telemetry.Environment) == "" {
+		cfg.Telemetry.Environment = cfg.Environment
 	}
 	if err := applyEnvOverrides(cfg); err != nil {
 		return nil, err
@@ -137,6 +172,11 @@ func (c *Config) Validate() error {
 	}
 	if strings.TrimSpace(c.Version) == "" {
 		add("version is required")
+	}
+	switch c.Environment {
+	case EnvDevelopment, EnvStaging, EnvProduction:
+	default:
+		add("environment must be one of %s, %s, %s", EnvDevelopment, EnvStaging, EnvProduction)
 	}
 	switch c.LogLevel {
 	case "debug", "info", "warn", "error":
@@ -177,6 +217,22 @@ func (c *Config) Validate() error {
 	if c.HTTP.MaxBodyBytes <= 0 {
 		add("http.max_body_bytes must be positive")
 	}
+	if c.HTTP.RateLimit.Enabled {
+		if c.HTTP.RateLimit.RequestsPerSecond <= 0 {
+			add("http.rate_limit.requests_per_second must be positive")
+		}
+		if c.HTTP.RateLimit.Burst <= 0 {
+			add("http.rate_limit.burst must be positive")
+		}
+		if c.HTTP.RateLimit.MaxTrackedClients <= 0 {
+			add("http.rate_limit.max_tracked_clients must be positive")
+		}
+	}
+	for _, proxy := range c.HTTP.TrustedProxies {
+		if _, err := ParsePrefix(proxy); err != nil {
+			add("http.trusted_proxies: %q is not a valid IP or CIDR block", proxy)
+		}
+	}
 
 	if c.Database.Driver != "mysql" {
 		add("database.driver must be mysql")
@@ -205,6 +261,12 @@ func (c *Config) Validate() error {
 	if c.Database.ConnectTimeout <= 0 {
 		add("database.connect_timeout must be positive")
 	}
+	if c.Database.ConnectRetries < 0 {
+		add("database.connect_retries must not be negative")
+	}
+	if c.Database.ConnectRetryInterval <= 0 {
+		add("database.connect_retry_interval must be positive")
+	}
 	if strings.TrimSpace(c.Database.TLSMode) == "" {
 		add("database.tls_mode is required")
 	}
@@ -225,7 +287,47 @@ func (c *Config) Validate() error {
 		add("telemetry.shutdown_timeout must be positive")
 	}
 
+	c.validateProduction(add)
+
 	return errors.Join(errs...)
+}
+
+// validateProduction enforces the security invariants that must hold when the
+// service is deployed with the production environment. The service refuses to
+// start rather than silently running with an unsafe posture.
+func (c *Config) validateProduction(add func(format string, args ...any)) {
+	if c.Environment != EnvProduction {
+		return
+	}
+	if strings.TrimSpace(c.HTTP.AuthToken) == "" {
+		add("http.auth_token is required in the %s environment", EnvProduction)
+	}
+	if strings.EqualFold(c.Database.TLSMode, "false") {
+		add("database.tls_mode must not be \"false\" in the %s environment; use \"true\" or \"skip-verify\"", EnvProduction)
+	}
+	if strings.EqualFold(c.Database.User, "root") {
+		add("database.user must not be \"root\" in the %s environment; use a least-privilege account", EnvProduction)
+	}
+	if len(c.Database.Password) < 8 {
+		add("database.password must be at least 8 characters in the %s environment", EnvProduction)
+	}
+}
+
+// ParsePrefix normalises an IP address or CIDR block into a masked network
+// prefix. A bare address is treated as a single-host prefix.
+func ParsePrefix(value string) (netip.Prefix, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return netip.Prefix{}, errors.New("empty prefix")
+	}
+	if prefix, err := netip.ParsePrefix(trimmed); err == nil {
+		return prefix.Masked(), nil
+	}
+	addr, err := netip.ParseAddr(trimmed)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
 }
 
 func applyEnvOverrides(cfg *Config) error {
@@ -233,11 +335,13 @@ func applyEnvOverrides(cfg *Config) error {
 
 	envString("SERVICE_NAME", &cfg.ServiceName)
 	envString("SERVICE_VERSION", &cfg.Version)
+	envString("APP_ENV", &cfg.Environment)
 	envString("LOG_LEVEL", &cfg.LogLevel)
 	envString("LOG_FORMAT", &cfg.LogFormat)
 
 	envString("HTTP_ADDR", &cfg.HTTP.Addr)
 	envString("HTTP_AUTH_TOKEN", &cfg.HTTP.AuthToken)
+	envSlice("HTTP_TRUSTED_PROXIES", &cfg.HTTP.TrustedProxies)
 	errs = append(errs,
 		envDuration("HTTP_READ_HEADER_TIMEOUT", &cfg.HTTP.ReadHeaderTimeout),
 		envDuration("HTTP_READ_TIMEOUT", &cfg.HTTP.ReadTimeout),
@@ -248,6 +352,10 @@ func applyEnvOverrides(cfg *Config) error {
 		envDuration("HTTP_READINESS_TIMEOUT", &cfg.HTTP.ReadinessTimeout),
 		envInt("HTTP_MAX_HEADER_BYTES", &cfg.HTTP.MaxHeaderBytes),
 		envInt64("HTTP_MAX_BODY_BYTES", &cfg.HTTP.MaxBodyBytes),
+		envBool("HTTP_RATE_LIMIT_ENABLED", &cfg.HTTP.RateLimit.Enabled),
+		envFloat64("HTTP_RATE_LIMIT_RPS", &cfg.HTTP.RateLimit.RequestsPerSecond),
+		envInt("HTTP_RATE_LIMIT_BURST", &cfg.HTTP.RateLimit.Burst),
+		envInt("HTTP_RATE_LIMIT_MAX_CLIENTS", &cfg.HTTP.RateLimit.MaxTrackedClients),
 	)
 
 	envString("DATABASE_HOST", &cfg.Database.Host)
@@ -261,6 +369,8 @@ func applyEnvOverrides(cfg *Config) error {
 		envInt("DATABASE_MAX_IDLE_CONNS", &cfg.Database.MaxIdleConns),
 		envDuration("DATABASE_CONN_MAX_LIFETIME", &cfg.Database.ConnMaxLifetime),
 		envDuration("DATABASE_CONNECT_TIMEOUT", &cfg.Database.ConnectTimeout),
+		envDuration("DATABASE_CONNECT_RETRY_INTERVAL", &cfg.Database.ConnectRetryInterval),
+		envInt("DATABASE_CONNECT_RETRIES", &cfg.Database.ConnectRetries),
 	)
 
 	envString("TELEMETRY_ENDPOINT", &cfg.Telemetry.Endpoint)
@@ -281,6 +391,23 @@ func envString(key string, target *string) {
 	if value, ok := os.LookupEnv(key); ok {
 		*target = value
 	}
+}
+
+// envSlice overrides a string slice from a comma-separated environment value.
+// Blank entries are discarded.
+func envSlice(key string, target *[]string) {
+	value, ok := os.LookupEnv(key)
+	if !ok {
+		return
+	}
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+	*target = items
 }
 
 func envInt(key string, target *int) error {

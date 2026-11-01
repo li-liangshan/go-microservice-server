@@ -1,16 +1,17 @@
 -- ───────────────────────────────────────────────────────────────────────────
 -- 0001_init.sql — initial schema for microservice-server
--- Creates the database and the `users` table.
+-- Creates the `users` table.
 -- ───────────────────────────────────────────────────────────────────────────
--- Apply:   mysql -h<host> -P<port> -u<user> -p<pwd> < migrations/0001_init.sql
+-- Apply:   mysql -h<host> -P<port> -u<user> -p<pwd> --database=<db> < migrations/0001_init.sql
+--
+-- The target database is deliberately NOT named here: the database name is a
+-- deployment setting (DATABASE_NAME) and is selected by the caller — the
+-- migrate script passes --database, and the Docker entrypoint passes
+-- --database="$MYSQL_DATABASE". Hard-coding it here would tie the schema to
+-- one deployment name.
+--
 -- Re-runnable (CREATE … IF NOT EXISTS).
 -- ───────────────────────────────────────────────────────────────────────────
-
-CREATE DATABASE IF NOT EXISTS `microservice`
-  CHARACTER SET utf8mb4
-  COLLATE utf8mb4_unicode_ci;
-
-USE `microservice`;
 
 CREATE TABLE IF NOT EXISTS `users` (
   `id`         BIGINT       NOT NULL AUTO_INCREMENT,

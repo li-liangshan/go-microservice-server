@@ -42,13 +42,18 @@ func requestLogger(log *slog.Logger) func(http.Handler) http.Handler {
 				route = routeContext.RoutePattern()
 			}
 
+			remote := ClientIP(r.Context())
+			if remote == "" {
+				remote = r.RemoteAddr
+			}
+
 			attrs := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", ww.status,
 				"bytes", ww.bytes,
 				"duration_ms", time.Since(start).Milliseconds(),
-				"remote", r.RemoteAddr,
+				"remote", remote,
 				"request_id", chimw.GetReqID(r.Context()),
 				"user_agent", r.UserAgent(),
 			}
@@ -90,6 +95,9 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return n, err
 }
 
+// Unwrap exposes the wrapped writer to http.ResponseController.
+//
+//nolint:unused // reached through the ResponseController convention, not by a direct call
 func (r *statusRecorder) Unwrap() http.ResponseWriter {
 	return r.ResponseWriter
 }

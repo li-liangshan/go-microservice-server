@@ -1,5 +1,6 @@
 service_name: go-microservice
 version: 1.0.0
+environment: development
 log_level: info
 log_format: json
 
@@ -15,18 +16,27 @@ http:
   max_header_bytes: 1048576
   max_body_bytes: 1048576
   auth_token: ""
+  trusted_proxies: []
+  rate_limit:
+    enabled: true
+    requests_per_second: 50
+    burst: 100
+    max_tracked_clients: 10000
 
 database:
   driver: mysql
   host: localhost
   port: 3306
   user: root
-  password: admin
+  # Supplied through DATABASE_PASSWORD; no credential is stored in the repo.
+  password: ""
   name: microservice
   max_open_conns: 50
   max_idle_conns: 10
   conn_max_lifetime: 30m
   connect_timeout: 5s
+  connect_retries: 5
+  connect_retry_interval: 2s
   tls_mode: "false"
 
 telemetry:

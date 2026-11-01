@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: microservice-server
+  labels:
+    app.kubernetes.io/name: microservice-server
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: microservice-server
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: microservice-server
+  labels:
+    app.kubernetes.io/name: microservice-server
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: microservice-server

@@ -43,7 +43,11 @@ func newProductionTestServer(t *testing.T, fs *fakeStore, pinger Pinger, mutate 
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := service.NewUserService(fs, log)
-	return New(cfg, svc, pinger, log)
+	srv, err := New(cfg, svc, pinger, log)
+	if err != nil {
+		t.Fatalf("build server: %v", err)
+	}
+	return srv
 }
 
 func serve(t *testing.T, srv *Server, method, target string, body string, headers map[string]string) *httptest.ResponseRecorder {

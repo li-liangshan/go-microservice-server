@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The secret is not part of this bundle: create it from your secret manager
+# (see secret.example.yaml).
+resources:
+  - configmap.yaml
+  - deployment.yaml
+  - service.yaml
+
+commonLabels:
+  app.kubernetes.io/name: microservice-server
+  app.kubernetes.io/part-of: microservice-server

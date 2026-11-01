@@ -14,6 +14,13 @@ exporters:
     endpoint: jaeger:4317
     tls:
       insecure: true
+  # Metrics are exposed in Prometheus format so a scraper (or the bundled
+  # Prometheus container) can store them. Without this the HTTP and database
+  # metrics would only be printed to the collector log.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
   debug:
     verbosity: basic
 
@@ -26,4 +33,4 @@ service:
     metrics:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [prometheus]

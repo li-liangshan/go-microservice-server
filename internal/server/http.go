@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"mime"
@@ -25,6 +26,12 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+// isHealthPath reports whether the path is one of the probe endpoints, which
+// are excluded from tracing and rate limiting.
+func isHealthPath(path string) bool {
+	return path == "/healthz" || path == "/readyz"
+}
+
 // Pinger verifies downstream dependencies for readiness checks.
 type Pinger interface {
 	PingContext(context.Context) error
@@ -41,7 +48,12 @@ type Server struct {
 }
 
 // New builds the router and HTTP server.
-func New(cfg config.HTTPConfig, svc *service.UserService, pinger Pinger, log *slog.Logger) *Server {
+func New(cfg config.HTTPConfig, svc *service.UserService, pinger Pinger, log *slog.Logger) (*Server, error) {
+	resolver, err := newClientIPResolver(cfg.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("trusted proxies: %w", err)
+	}
+
 	r := chi.NewRouter()
 
 	// ── Standard production middleware ────────────────────────────────────
@@ -51,14 +63,23 @@ func New(cfg config.HTTPConfig, svc *service.UserService, pinger Pinger, log *sl
 			return r.Method + " " + r.URL.Path
 		}),
 		otelhttp.WithFilter(func(r *http.Request) bool {
-			return r.URL.Path != "/healthz" && r.URL.Path != "/readyz"
+			return !isHealthPath(r.URL.Path)
 		}),
 	))
 	r.Use(chimw.RequestID)
-	r.Use(chimw.RealIP)
+	// The client address must be resolved before anything that keys on it.
+	r.Use(clientIPMiddleware(resolver))
+	// The access log sits outside the rate limiter so that rejected requests
+	// are logged too. Without this, 429 responses vanish from the audit trail.
 	r.Use(requestLogger(log))
-	r.Use(chimw.Timeout(cfg.RequestTimeout))
+	if cfg.RateLimit.Enabled {
+		limiter := newRateLimiter(cfg.RateLimit.RequestsPerSecond, cfg.RateLimit.Burst, cfg.RateLimit.MaxTrackedClients)
+		r.Use(rateLimit(limiter))
+	}
+	// The recoverer sits outside the timeout middleware so that a panic
+	// raised by a handler is turned into a 500 rather than a lost response.
 	r.Use(recoverer(log))
+	r.Use(requestTimeout(cfg.RequestTimeout))
 	r.Use(chimw.RequestSize(cfg.MaxBodyBytes))
 	r.Use(otelRouteName())
 
@@ -101,7 +122,7 @@ func New(cfg config.HTTPConfig, svc *service.UserService, pinger Pinger, log *sl
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	})
 
-	return s
+	return s, nil
 }
 
 // ListenAndServe starts the HTTP server.

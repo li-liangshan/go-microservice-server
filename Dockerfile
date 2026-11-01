@@ -1,5 +1,8 @@
 # ── Build stage ──────────────────────────────────────────────────────────
-FROM golang:1.22-alpine AS builder
+# The builder image must ship a Go toolchain at least as new as the `go`
+# directive in go.mod: the official images pin GOTOOLCHAIN=local, so an older
+# toolchain fails with "go.mod requires go >= ..." instead of downloading one.
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -13,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -o /out/server ./cmd/server
 
 # ── Runtime stage ─────────────────────────────────────────────────────────
-FROM alpine:3.20
+FROM alpine:3.22
 
 RUN apk --no-cache add ca-certificates tzdata && \
     addgroup -S app && adduser -S app -G app

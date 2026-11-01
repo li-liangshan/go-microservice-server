@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: microservice-server
+  labels:
+    app.kubernetes.io/name: microservice-server
+data:
+  APP_ENV: "production"
+  SERVICE_NAME: "go-microservice"
+  LOG_LEVEL: "info"
+  LOG_FORMAT: "json"
+  HTTP_ADDR: ":8080"
+  HTTP_RATE_LIMIT_ENABLED: "true"
+  HTTP_RATE_LIMIT_RPS: "50"
+  HTTP_RATE_LIMIT_BURST: "100"
+  # The address ranges of the ingress that terminates TLS. Forwarding headers
+  # are only honoured for peers inside these ranges.
+  HTTP_TRUSTED_PROXIES: "10.0.0.0/8"
+  DATABASE_HOST: "mysql.default.svc.cluster.local"
+  DATABASE_PORT: "3306"
+  DATABASE_NAME: "microservice"
+  DATABASE_USER: "microservice"
+  DATABASE_TLS_MODE: "true"
+  DATABASE_MAX_OPEN_CONNS: "50"
+  DATABASE_MAX_IDLE_CONNS: "10"
+  DATABASE_CONNECT_RETRIES: "10"
+  DATABASE_CONNECT_RETRY_INTERVAL: "3s"
+  TELEMETRY_ENABLED: "true"
+  TELEMETRY_ENDPOINT: "otel-collector.observability.svc.cluster.local:4317"
+  TELEMETRY_INSECURE: "true"
+  TELEMETRY_ENVIRONMENT: "production"
+  TELEMETRY_SAMPLE_RATIO: "0.1"

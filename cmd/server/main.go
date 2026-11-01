@@ -27,15 +27,20 @@ import (
 // @BasePath /api/v1
 
 func main() {
-	if err := run(); err != nil {
+	if err := run(os.Args[1:]); err != nil {
 		slog.Error("service failed", "err", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
-	cfgPath := flag.String("config", "configs/config.yaml", "path to config file")
-	flag.Parse()
+// run wires up and serves the application. It takes the command line
+// arguments explicitly so that it can be exercised from tests.
+func run(args []string) error {
+	flags := flag.NewFlagSet("server", flag.ContinueOnError)
+	cfgPath := flags.String("config", "configs/config.yaml", "path to config file")
+	if err := flags.Parse(args); err != nil {
+		return fmt.Errorf("parse flags: %w", err)
+	}
 
 	// ── 1. Load configuration ──────────────────────────────────────────────
 	cfg, err := config.Load(*cfgPath)
@@ -46,7 +51,11 @@ func run() error {
 	// ── 2. Initialize structured logger ───────────────────────────────────
 	log := logger.New(cfg.LogLevel, cfg.LogFormat)
 	slog.SetDefault(log)
-	log.Info("service starting", "name", cfg.ServiceName, "version", cfg.Version)
+	log.Info("service starting",
+		"name", cfg.ServiceName,
+		"version", cfg.Version,
+		"environment", cfg.Environment,
+	)
 
 	// ── 3. Initialize OpenTelemetry ────────────────────────────────────────
 	telemetryProvider, err := telemetry.New(context.Background(), cfg, log)
@@ -81,7 +90,15 @@ func run() error {
 	// ── 5. Build dependency graph ─────────────────────────────────────────
 	userStore := store.NewUserStore(db)
 	userService := service.NewUserService(userStore, log)
-	httpServer := server.New(cfg.HTTP, userService, db, log)
+	httpServer, err := server.New(cfg.HTTP, userService, db, log)
+	if err != nil {
+		return fmt.Errorf("build http server: %w", err)
+	}
+	if cfg.HTTP.AuthToken == "" {
+		log.Warn("api authentication is disabled: /api/v1 is open to any caller")
+	} else {
+		log.Info("api authentication enabled")
+	}
 
 	// ── 6. Graceful startup & shutdown ────────────────────────────────────
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

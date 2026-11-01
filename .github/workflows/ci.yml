@@ -10,20 +10,94 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: admin
+        ports:
+          - "3306:3306"
+        options: >-
+          --health-cmd="mysqladmin ping -h127.0.0.1 -uroot -padmin --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      # Enables the MySQL integration test in internal/store.
+      TEST_MYSQL_HOST: 127.0.0.1
+      TEST_MYSQL_PORT: "3306"
+      TEST_MYSQL_USER: root
+      TEST_MYSQL_PASSWORD: admin
+      TEST_MYSQL_DATABASE: microservice_ci
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: true
-      - run: go mod download
-      - run: go vet ./...
-      - run: go test -race -cover ./...
-      - run: go build -trimpath ./cmd/server
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'ed:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62
+
+      - name: Test
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Check coverage threshold
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {print $3}' | tr -d '%')
+          echo "total coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { if (t+0 < 70) { printf "coverage %s%% is below the 70%% gate\n", t; exit 1 } }'
+
+      - name: Check dependencies for known vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Build
+        run: go build -trimpath ./cmd/server
 
   docker:
     runs-on: ubuntu-latest
+    env:
+      # The compose file refuses to render without an auth token.
+      HTTP_AUTH_TOKEN: ci-token
     steps:
       - uses: actions/checkout@v4
-      - run: docker compose config --quiet
-      - run: docker build --tag microservice-server:ci .
+      - name: Validate compose file
+        run: docker compose config --quiet
+      - name: Build image
+        run: docker build --tag microservice-server:ci .
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: microservice-server:ci
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+          ignore-unfixed: true
+      - name: Generate SBOM
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: microservice-server:ci
+          format: cyclonedx
+          output: sbom.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom.json
+          retention-days: 7

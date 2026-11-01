@@ -17,6 +17,7 @@ const (
 	qInsert  = "INSERT INTO users (name, email, created_at, updated_at) VALUES (?, ?, ?, ?)"
 	qUpdate  = "UPDATE users SET name = ?, email = ?, updated_at = ? WHERE id = ?"
 	qDelete  = "DELETE FROM users WHERE id = ?"
+	qExists  = "SELECT 1 FROM users WHERE id = ?"
 )
 
 // newTestStore wires *UserStore.db to sqlmock so callers don't need a real
@@ -193,10 +194,42 @@ func TestUserStore_Update_NotFound(t *testing.T) {
 	mock.ExpectExec(qUpdate).
 		WithArgs("x", "y@z.com", sqlmock.AnyArg(), int64(99)).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(qExists).
+		WithArgs(int64(99)).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}))
 
 	err := s.Update(context.Background(), &User{ID: 99, Name: "x", Email: "y@z.com"})
 	if !errors.Is(err, ErrNotFound) {
 		t.Errorf("want ErrNotFound, got %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+// An UPDATE that writes the values already stored reports zero affected rows.
+// The row does exist, so the update must succeed instead of reporting
+// "not found".
+func TestUserStore_Update_NoOpStillSucceeds(t *testing.T) {
+	s, mock, cleanup := newTestStore(t)
+	defer cleanup()
+
+	mock.ExpectExec(qUpdate).
+		WithArgs("alice", "a@b.com", sqlmock.AnyArg(), int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(qExists).
+		WithArgs(int64(7)).
+		WillReturnRows(sqlmock.NewRows([]string{"1"}).AddRow(1))
+
+	u := &User{ID: 7, Name: "alice", Email: "a@b.com"}
+	if err := s.Update(context.Background(), u); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if u.UpdatedAt.IsZero() {
+		t.Error("UpdatedAt not advanced")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
 	}
 }
 

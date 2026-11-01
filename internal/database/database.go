@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/url"
+	"time"
 
 	"microservice-server/internal/config"
 
@@ -18,8 +19,33 @@ type DB struct {
 	*sql.DB
 }
 
-// New opens a database connection, configures the connection pool and verifies connectivity.
+// New opens a database connection, configures the connection pool and verifies
+// connectivity. The initial connection is retried with a fixed backoff so that
+// the service can start alongside a database that is still booting.
 func New(ctx context.Context, cfg config.DBConfig) (*DB, error) {
+	var lastErr error
+
+	for attempt := 0; attempt <= cfg.ConnectRetries; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(cfg.ConnectRetryInterval):
+			}
+		}
+
+		conn, err := open(ctx, cfg)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+
+	return nil, lastErr
+}
+
+// open performs a single connection attempt: open, instrument, tune and ping.
+func open(ctx context.Context, cfg config.DBConfig) (*DB, error) {
 	dsn := buildDSN(cfg)
 
 	conn, err := otelsql.Open("mysql", dsn, otelsql.WithAttributes(semconv.DBSystemMySQL))
@@ -49,8 +75,12 @@ func New(ctx context.Context, cfg config.DBConfig) (*DB, error) {
 
 func buildDSN(cfg config.DBConfig) string {
 	// parseTime=true lets the driver scan time.Time directly from DATETIME columns.
+	// clientFoundRows=true makes RowsAffected report *matched* rows rather than
+	// *changed* rows, so an UPDATE that writes identical values still counts as
+	// one affected row. Without it a no-op update is indistinguishable from a
+	// missing row.
 	return fmt.Sprintf(
-		"%s:%s@tcp(%s:%d)/%s?parseTime=true&loc=UTC&charset=utf8mb4&tls=%s",
+		"%s:%s@tcp(%s:%d)/%s?parseTime=true&loc=UTC&charset=utf8mb4&clientFoundRows=true&tls=%s",
 		cfg.User, cfg.Password, cfg.Host, cfg.Port, url.QueryEscape(cfg.Name), url.QueryEscape(cfg.TLSMode),
 	)
 }

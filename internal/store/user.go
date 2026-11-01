@@ -60,7 +60,9 @@ func (s *UserStore) List(ctx context.Context, limit, offset int) ([]*User, error
 	}
 	defer rows.Close()
 
-	var users []*User
+	// Initialised as an empty slice so that an empty result marshals to `[]`
+	// rather than `null`.
+	users := make([]*User, 0)
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.CreatedAt, &u.UpdatedAt); err != nil {
@@ -98,6 +100,12 @@ func (s *UserStore) Create(ctx context.Context, u *User) error {
 
 // Update modifies an existing user. Returns ErrNotFound when no row matches id,
 // ErrDuplicate on email unique-constraint violation.
+//
+// MySQL reports the number of *changed* rows for an UPDATE, so writing values
+// identical to the ones already stored yields zero affected rows even though
+// the row exists. The DSN enables clientFoundRows to make the driver report
+// matched rows, and the explicit existence check below keeps the behaviour
+// correct even when the statement is executed through another driver.
 func (s *UserStore) Update(ctx context.Context, u *User) error {
 	now := time.Now().UTC()
 	res, err := s.db.ExecContext(ctx,
@@ -116,10 +124,29 @@ func (s *UserStore) Update(ctx context.Context, u *User) error {
 		return err
 	}
 	if n == 0 {
-		return ErrNotFound
+		exists, err := s.exists(ctx, u.ID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return ErrNotFound
+		}
 	}
 	u.UpdatedAt = now
 	return nil
+}
+
+// exists reports whether a user with the given id is present.
+func (s *UserStore) exists(ctx context.Context, id int64) (bool, error) {
+	var found int
+	err := s.db.QueryRowContext(ctx, "SELECT 1 FROM users WHERE id = ?", id).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // Delete removes a user by id. Returns ErrNotFound when no row matches.

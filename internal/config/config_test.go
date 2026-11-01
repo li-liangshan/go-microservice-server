@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,7 +17,7 @@ func TestMain(m *testing.M) {
 		"HTTP_MAX_BODY_BYTES", "DATABASE_HOST", "DATABASE_PORT", "DATABASE_USER",
 		"DATABASE_PASSWORD", "DATABASE_NAME", "DATABASE_MAX_OPEN_CONNS",
 		"DATABASE_MAX_IDLE_CONNS", "DATABASE_CONN_MAX_LIFETIME", "DATABASE_CONNECT_TIMEOUT",
-		"DATABASE_TLS_MODE",
+		"DATABASE_TLS_MODE", "DATABASE_CONNECT_RETRIES", "DATABASE_CONNECT_RETRY_INTERVAL",
 		"TELEMETRY_ENDPOINT", "TELEMETRY_ENVIRONMENT", "TELEMETRY_ENABLED",
 		"TELEMETRY_INSECURE", "TELEMETRY_SAMPLE_RATIO", "TELEMETRY_EXPORT_INTERVAL",
 		"TELEMETRY_EXPORT_TIMEOUT", "TELEMETRY_SHUTDOWN_TIMEOUT",
@@ -66,6 +67,8 @@ func TestLoad_AppliesAllDefaults(t *testing.T) {
 		{"DB.MaxIdleConns", cfg.Database.MaxIdleConns, 10},
 		{"DB.ConnMaxLifetime", cfg.Database.ConnMaxLifetime, 30 * time.Minute},
 		{"DB.ConnectTimeout", cfg.Database.ConnectTimeout, 5 * time.Second},
+		{"DB.ConnectRetries", cfg.Database.ConnectRetries, 5},
+		{"DB.ConnectRetryInterval", cfg.Database.ConnectRetryInterval, 2 * time.Second},
 		{"DB.TLSMode", cfg.Database.TLSMode, "false"},
 		{"Telemetry.Enabled", cfg.Telemetry.Enabled, true},
 		{"Telemetry.Endpoint", cfg.Telemetry.Endpoint, "localhost:4317"},
@@ -318,5 +321,136 @@ func TestValidate_RejectsUnsafeValues(t *testing.T) {
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected validation error")
+	}
+}
+
+// productionConfig returns a configuration that satisfies every production
+// requirement; individual tests break one rule at a time.
+func productionConfig() *Config {
+	return &Config{
+		ServiceName: "svc",
+		Version:     "1",
+		Environment: EnvProduction,
+		LogLevel:    "info",
+		LogFormat:   "json",
+		HTTP: HTTPConfig{
+			Addr:              ":8080",
+			ReadHeaderTimeout: time.Second,
+			ReadTimeout:       time.Second,
+			WriteTimeout:      time.Second,
+			IdleTimeout:       time.Second,
+			RequestTimeout:    time.Second,
+			ShutdownTimeout:   time.Second,
+			ReadinessTimeout:  time.Second,
+			MaxHeaderBytes:    1,
+			MaxBodyBytes:      1,
+			AuthToken:         "a-strong-token",
+		},
+		Database: DBConfig{
+			Driver:               "mysql",
+			Host:                 "db.internal",
+			Port:                 3306,
+			User:                 "app",
+			Password:             "a-strong-password",
+			Name:                 "microservice",
+			MaxOpenConns:         5,
+			MaxIdleConns:         5,
+			ConnMaxLifetime:      time.Minute,
+			ConnectTimeout:       time.Second,
+			ConnectRetries:       3,
+			ConnectRetryInterval: time.Second,
+			TLSMode:              "true",
+		},
+		Telemetry: TelemetryConfig{
+			Enabled:         true,
+			Endpoint:        "collector:4317",
+			SampleRatio:     1,
+			ExportInterval:  time.Second,
+			ExportTimeout:   time.Second,
+			ShutdownTimeout: time.Second,
+		},
+	}
+}
+
+func TestValidate_ProductionAcceptsSafeConfiguration(t *testing.T) {
+	if err := productionConfig().Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidate_ProductionRequiresSafeSettings(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+		want   string
+	}{
+		{"no auth token", func(c *Config) { c.HTTP.AuthToken = "" }, "auth_token"},
+		{"root database user", func(c *Config) { c.Database.User = "root" }, "must not be \"root\""},
+		{"database tls disabled", func(c *Config) { c.Database.TLSMode = "false" }, "tls_mode"},
+		{"short database password", func(c *Config) { c.Database.Password = "short" }, "password"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := productionConfig()
+			tc.mutate(cfg)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatal("expected a validation error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q should mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// The production rules must not apply to the other environments.
+func TestValidate_NonProductionAllowsUnsafeSettings(t *testing.T) {
+	cfg := productionConfig()
+	cfg.Environment = EnvDevelopment
+	cfg.HTTP.AuthToken = ""
+	cfg.Database.User = "root"
+	cfg.Database.TLSMode = "false"
+	cfg.Database.Password = ""
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidate_RejectsInvalidConnectRetrySettings(t *testing.T) {
+	cfg := productionConfig()
+	cfg.Environment = EnvDevelopment
+	cfg.Database.ConnectRetries = -1
+	cfg.Database.ConnectRetryInterval = 0
+
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("expected a validation error")
+	}
+	for _, want := range []string{"connect_retries", "connect_retry_interval"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q should mention %q", err, want)
+		}
+	}
+}
+
+func TestLoad_AppliesConnectRetryEnvironmentOverrides(t *testing.T) {
+	t.Setenv("DATABASE_CONNECT_RETRIES", "7")
+	t.Setenv("DATABASE_CONNECT_RETRY_INTERVAL", "3s")
+
+	path := filepath.Join(t.TempDir(), "empty.yaml")
+	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Database.ConnectRetries != 7 {
+		t.Errorf("ConnectRetries: got %d, want 7", cfg.Database.ConnectRetries)
+	}
+	if cfg.Database.ConnectRetryInterval != 3*time.Second {
+		t.Errorf("ConnectRetryInterval: got %v, want 3s", cfg.Database.ConnectRetryInterval)
 	}
 }

@@ -134,3 +134,7 @@ api/openapi.yaml
 # ============================================================
 .history/
 .local/
+
+# Build and scan artefacts
+sbom.json
+*.sbom.json
